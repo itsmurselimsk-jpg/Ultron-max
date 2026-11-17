@@ -1,8 +1,13 @@
 package com.example.ui
 
+import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -63,6 +68,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -75,11 +81,16 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.example.AiUiState
+import com.example.CoreVisualMode
 import com.example.UltronContainer
 import com.example.UltronViewModel
 import com.example.auth.AuthManager
+import com.example.system.UltronIntentActions
+import com.example.ui.components.PersistentMiniCoreBar
 import com.example.ui.components.RiskConfirmationDialog
 import com.example.ui.components.TacticalStatusChip
+import com.example.voice.VoiceState
 import com.example.ui.screens.AgentScreen
 import com.example.ui.screens.AuthScreen
 import com.example.ui.screens.CoreVoiceScreen
@@ -138,7 +149,9 @@ private val ULTRON_DESTINATIONS = listOf(
 
 @Composable
 fun UltronApp(
-    container: UltronContainer
+    container: UltronContainer,
+    pendingLaunchAction: String? = null,
+    onConsumeLaunchAction: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUser by AuthManager.authStateFlow().collectAsStateWithLifecycle(
@@ -170,6 +183,29 @@ fun UltronApp(
         val pendingChatConfirm by viewModel.chatToolConfirmation.collectAsStateWithLifecycle()
         val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
         val brightnessRequest by viewModel.windowBrightnessRequest.collectAsStateWithLifecycle()
+        val voiceState by viewModel.voiceState.collectAsStateWithLifecycle()
+        val partialTranscript by viewModel.partialTranscript.collectAsStateWithLifecycle()
+        val isTtsSpeaking by viewModel.isTtsSpeaking.collectAsStateWithLifecycle()
+        val emergencyStop by viewModel.emergencyStopEngaged.collectAsStateWithLifecycle()
+        val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+        val activeAgentTaskId by viewModel.activeAgentTaskId.collectAsStateWithLifecycle()
+
+        val coreMode = when {
+            emergencyStop -> CoreVisualMode.ALERT
+            isTtsSpeaking -> CoreVisualMode.SPEAKING
+            voiceState == VoiceState.LISTENING || voiceState == VoiceState.WAKE_LISTENING -> CoreVisualMode.LISTENING
+            aiState is AiUiState.Loading || aiState is AiUiState.Streaming || activeAgentTaskId != null -> CoreVisualMode.THINKING
+            else -> CoreVisualMode.IDLE
+        }
+
+        val miniCoreMicLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission()
+        ) { granted ->
+            viewModel.refreshSystemState()
+            if (granted) {
+                viewModel.toggleVoiceListening()
+            }
+        }
 
         var biometricUnlocked by rememberSaveable(user.uid) { mutableStateOf(false) }
         var biometricError by remember { mutableStateOf<String?>(null) }
@@ -224,6 +260,7 @@ fun UltronApp(
             val navController = rememberNavController()
             val navBackStackEntry by navController.currentBackStackEntryAsState()
             val currentDestination = navBackStackEntry?.destination
+            val isOnCoreRoute = currentDestination?.hasRoute(CoreRoute::class) ?: true
 
             val onNavigate: (Any) -> Unit = { route ->
                 navController.navigate(route) {
@@ -232,6 +269,31 @@ fun UltronApp(
                     }
                     launchSingleTop = true
                     restoreState = true
+                }
+            }
+
+            LaunchedEffect(pendingLaunchAction) {
+                when (pendingLaunchAction) {
+                    UltronIntentActions.ACTION_LAUNCH_VOICE_CORE -> {
+                        onNavigate(CoreRoute)
+                        val hasMic = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasMic && !emergencyStop && voiceState == VoiceState.IDLE) {
+                            viewModel.toggleVoiceListening(requireWakeWord = false)
+                        }
+                        onConsumeLaunchAction()
+                    }
+                    UltronIntentActions.ACTION_OPEN_BRIEFING -> {
+                        onNavigate(CoreRoute)
+                        viewModel.refreshBriefingIfEmpty()
+                        onConsumeLaunchAction()
+                    }
+                    UltronIntentActions.ACTION_OPEN_SECURITY -> {
+                        onNavigate(SecurityRoute)
+                        onConsumeLaunchAction()
+                    }
                 }
             }
 
@@ -298,55 +360,114 @@ fun UltronApp(
                         },
                         bottomBar = {
                             if (!useRail) {
-                                NavigationBar(
-                                    containerColor = CharcoalDeep,
-                                    contentColor = TextSecondary,
-                                    modifier = Modifier.navigationBarsPadding()
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(ObsidianVoid)
                                 ) {
-                                    ULTRON_DESTINATIONS.forEach { item ->
-                                        val selected = currentDestination?.hasRoute(item.route::class) == true
-                                        NavigationBarItem(
-                                            selected = selected,
-                                            onClick = { onNavigate(item.route) },
-                                            icon = {
-                                                Icon(
-                                                    imageVector = item.icon,
-                                                    contentDescription = item.label
-                                                )
+                                    AnimatedVisibility(visible = !isOnCoreRoute) {
+                                        PersistentMiniCoreBar(
+                                            mode = coreMode,
+                                            voiceState = voiceState,
+                                            isTtsSpeaking = isTtsSpeaking,
+                                            emergencyStop = emergencyStop,
+                                            partialTranscript = partialTranscript,
+                                            onOpenCore = { onNavigate(CoreRoute) },
+                                            onToggleVoice = {
+                                                val hasMic = ContextCompat.checkSelfPermission(
+                                                    context,
+                                                    Manifest.permission.RECORD_AUDIO
+                                                ) == PackageManager.PERMISSION_GRANTED
+                                                if (hasMic) {
+                                                    viewModel.toggleVoiceListening()
+                                                } else {
+                                                    miniCoreMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                                }
                                             },
-                                            label = {
-                                                Text(
-                                                    text = item.label,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            },
-                                            colors = NavigationBarItemDefaults.colors(
-                                                selectedIconColor = CrimsonLaser,
-                                                selectedTextColor = TextPrimary,
-                                                indicatorColor = CrimsonDarkContainer,
-                                                unselectedIconColor = TextMuted,
-                                                unselectedTextColor = TextMuted
-                                            ),
-                                            modifier = Modifier
-                                                .minimumInteractiveComponentSize()
-                                                .testTag(item.tag)
+                                            onBargeIn = { viewModel.bargeInInterrupt() },
+                                            onEngageEmergencyStop = { viewModel.engageEmergencyStop() },
+                                            onResetEmergencyStop = { viewModel.resetEmergencyStop() }
                                         )
+                                    }
+                                    NavigationBar(
+                                        containerColor = CharcoalDeep,
+                                        contentColor = TextSecondary,
+                                        modifier = Modifier.navigationBarsPadding()
+                                    ) {
+                                        ULTRON_DESTINATIONS.forEach { item ->
+                                            val selected = currentDestination?.hasRoute(item.route::class) == true
+                                            NavigationBarItem(
+                                                selected = selected,
+                                                onClick = { onNavigate(item.route) },
+                                                icon = {
+                                                    Icon(
+                                                        imageVector = item.icon,
+                                                        contentDescription = item.label
+                                                    )
+                                                },
+                                                label = {
+                                                    Text(
+                                                        text = item.label,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                },
+                                                colors = NavigationBarItemDefaults.colors(
+                                                    selectedIconColor = CrimsonLaser,
+                                                    selectedTextColor = TextPrimary,
+                                                    indicatorColor = CrimsonDarkContainer,
+                                                    unselectedIconColor = TextMuted,
+                                                    unselectedTextColor = TextMuted
+                                                ),
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag(item.tag)
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     ) { innerPadding ->
-                        NavHost(
-                            navController = navController,
-                            startDestination = CoreRoute,
+                        Column(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(innerPadding)
                         ) {
-                            composable<CoreRoute> {
-                                CoreVoiceScreen(viewModel = viewModel)
+                            AnimatedVisibility(visible = useRail && !isOnCoreRoute) {
+                                PersistentMiniCoreBar(
+                                    mode = coreMode,
+                                    voiceState = voiceState,
+                                    isTtsSpeaking = isTtsSpeaking,
+                                    emergencyStop = emergencyStop,
+                                    partialTranscript = partialTranscript,
+                                    onOpenCore = { onNavigate(CoreRoute) },
+                                    onToggleVoice = {
+                                        val hasMic = ContextCompat.checkSelfPermission(
+                                            context,
+                                            Manifest.permission.RECORD_AUDIO
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                        if (hasMic) {
+                                            viewModel.toggleVoiceListening()
+                                        } else {
+                                            miniCoreMicLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                        }
+                                    },
+                                    onBargeIn = { viewModel.bargeInInterrupt() },
+                                    onEngageEmergencyStop = { viewModel.engageEmergencyStop() },
+                                    onResetEmergencyStop = { viewModel.resetEmergencyStop() }
+                                )
                             }
+                            NavHost(
+                                navController = navController,
+                                startDestination = CoreRoute,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                            ) {
+                                composable<CoreRoute> {
+                                    CoreVoiceScreen(viewModel = viewModel)
+                                }
                             composable<AgentsRoute> {
                                 AgentScreen(viewModel = viewModel)
                             }
@@ -359,11 +480,12 @@ fun UltronApp(
                             composable<LabRoute> {
                                 ResearchDevScreen(viewModel = viewModel)
                             }
-                            composable<SecurityRoute> {
-                                MonitorSecurityScreen(
-                                    viewModel = viewModel,
-                                    isKeystoreActive = container.cryptoManager.isHardwareKeystoreActive
-                                )
+                                composable<SecurityRoute> {
+                                    MonitorSecurityScreen(
+                                        viewModel = viewModel,
+                                        isKeystoreActive = container.cryptoManager.isHardwareKeystoreActive
+                                    )
+                                }
                             }
                         }
                     }

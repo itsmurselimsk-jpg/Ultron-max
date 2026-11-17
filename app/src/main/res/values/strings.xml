@@ -7,4 +7,8 @@
     <string name="error_auth_required">Google Sign-In is required to sync encrypted data.</string>
     <string name="error_biometric_failed">Biometric verification failed or was cancelled.</string>
     <string name="error_emergency_stop">Emergency Stop engaged. All autonomous agents and voice loops halted.</string>
+    <string name="quick_tile_label">Ultron Core</string>
+    <string name="widget_description">Ultron Omega tactical status, quick voice launch, flashlight toggle, and Emergency Stop.</string>
+    <string name="briefing_channel_name">Ultron Tactical Briefings</string>
+    <string name="briefing_channel_description">Opt-in periodic device telemetry, pinned directive, and mission status summaries.</string>
 </resources>

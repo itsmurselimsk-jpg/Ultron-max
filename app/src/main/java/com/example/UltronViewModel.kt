@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
+import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.agent.PendingConfirmationRequest
@@ -25,9 +26,12 @@ import com.example.security.RiskLevel
 import com.example.security.RiskPolicyLevel
 import com.example.security.UserPreferencesSnapshot
 import com.example.security.VoiceLanguage
+import com.example.system.BriefingScheduler
+import com.example.system.SurfaceInstaller
 import com.example.vision.VisionTaskMode
 import com.example.voice.VoiceForegroundService
 import com.example.voice.VoiceState
+import com.example.widget.UltronGlanceWidget
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -163,6 +167,22 @@ class UltronViewModel(
     init {
         refreshSystemState()
         startCloudMemorySync()
+        observeWidgetEmergencyStopSync()
+    }
+
+    private fun observeWidgetEmergencyStopSync() {
+        viewModelScope.launch {
+            container.credentialStore.preferencesFlow.collectLatest { prefs ->
+                if (prefs.widgetEmergencyStop && !emergencyStopEngaged.value) {
+                    container.riskEngine.engageEmergencyStop()
+                    activeChatJob?.cancel()
+                    activeAgentJob?.cancel()
+                    stopVoiceSession()
+                } else if (!prefs.widgetEmergencyStop && emergencyStopEngaged.value) {
+                    container.riskEngine.resetEmergencyStop()
+                }
+            }
+        }
     }
 
     private fun startCloudMemorySync() {
@@ -681,6 +701,9 @@ class UltronViewModel(
         val result = container.androidToolExecutor.toggleFlashlight(enabled)
         _statusBanner.value = result
         viewModelScope.launch {
+            val isTorchOn = result.contains("ON", ignoreCase = true)
+            container.credentialStore.updateWidgetStatus(torchActive = isTorchOn)
+            runCatching { UltronGlanceWidget().updateAll(appContext) }
             container.memoryRepository.recordAudit(
                 currentUserId, "USER", "TORCH_TOGGLE", RiskLevel.MEDIUM, "EXECUTED",
                 result, preferences.value.cloudSyncEnabled
@@ -764,6 +787,8 @@ class UltronViewModel(
         container.agentEngine.resolveConfirmation(false)
         _aiState.value = AiUiState.Error("EMERGENCY STOP ENGAGED — All active operations halted.")
         viewModelScope.launch {
+            container.credentialStore.updateWidgetStatus(torchActive = false, emergencyStop = true)
+            runCatching { UltronGlanceWidget().updateAll(appContext) }
             container.memoryRepository.recordAudit(
                 currentUserId, "USER", "EMERGENCY_STOP", RiskLevel.CRITICAL, "STOPPED",
                 "Operator engaged global Emergency Stop kill switch",
@@ -776,6 +801,76 @@ class UltronViewModel(
         container.riskEngine.resetEmergencyStop()
         _aiState.value = AiUiState.Idle
         _statusBanner.value = "Emergency Stop cleared. Systems nominal."
+        viewModelScope.launch {
+            container.credentialStore.updateWidgetStatus(emergencyStop = false)
+            runCatching { UltronGlanceWidget().updateAll(appContext) }
+        }
+    }
+
+    // --- SYSTEM SURFACES & PROACTIVE BRIEFINGS ---
+    fun setProactiveBriefings(enabled: Boolean, intervalHours: Int = 12) {
+        viewModelScope.launch {
+            container.credentialStore.updateBriefingPreference(enabled, intervalHours)
+            BriefingScheduler.schedule(appContext, enabled, intervalHours)
+            if (enabled) {
+                BriefingScheduler.generateAndDispatch(
+                    context = appContext,
+                    userIdOverride = currentUserId,
+                    forceNotify = false
+                )
+                _statusBanner.value = "Proactive Tactical Briefings scheduled every ${intervalHours}h."
+            } else {
+                _statusBanner.value = "Proactive Briefings paused."
+            }
+            refreshSystemState()
+        }
+    }
+
+    fun refreshBriefingNow(forceNotify: Boolean = false) {
+        viewModelScope.launch {
+            val (title, _) = BriefingScheduler.generateAndDispatch(
+                context = appContext,
+                userIdOverride = currentUserId,
+                forceNotify = forceNotify
+            )
+            _statusBanner.value = "Updated: $title"
+        }
+    }
+
+    fun refreshBriefingIfEmpty() {
+        if (preferences.value.latestBriefingBody.isBlank()) {
+            refreshBriefingNow(forceNotify = false)
+        } else {
+            viewModelScope.launch {
+                container.credentialStore.dismissBriefing(false)
+            }
+        }
+    }
+
+    fun dismissBriefingCard() {
+        viewModelScope.launch {
+            container.credentialStore.dismissBriefing(true)
+        }
+    }
+
+    fun speakLatestBriefing() {
+        val prefs = preferences.value
+        val text = prefs.latestBriefingBody.ifBlank { return }
+        if (!emergencyStopEngaged.value) {
+            container.ttsEngine.speak("${prefs.latestBriefingTitle}. $text", prefs.voiceLanguage)
+        }
+    }
+
+    fun requestQuickSettingsTile() {
+        SurfaceInstaller.requestAddQuickTile(appContext) { msg ->
+            _statusBanner.value = msg
+        }
+    }
+
+    fun requestPinHomeWidget() {
+        viewModelScope.launch {
+            _statusBanner.value = SurfaceInstaller.requestPinHomeWidget(appContext)
+        }
     }
 
     fun openWriteSettings() = appContext.startActivity(container.permissionManager.createWriteSettingsIntent())

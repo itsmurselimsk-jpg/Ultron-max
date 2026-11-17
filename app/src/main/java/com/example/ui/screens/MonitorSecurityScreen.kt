@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -17,12 +22,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.FlashlightOn
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Widgets
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -54,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.UltronViewModel
@@ -97,6 +105,16 @@ fun MonitorSecurityScreen(
     var appLaunchInput by remember { mutableStateOf("") }
     var patInput by remember { mutableStateOf("") }
     var showAccessibilityDisclosure by remember { mutableStateOf(false) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        viewModel.refreshSystemState()
+        viewModel.setProactiveBriefings(enabled = true)
+        if (!granted) {
+            viewModel.refreshBriefingNow(forceNotify = false)
+        }
+    }
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -343,10 +361,79 @@ fun MonitorSecurityScreen(
                         }
                     }
 
+                    // System Surfaces & Proactive Briefings
+                    Surface(
+                        color = CharcoalElevated,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, HairlineBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Widgets, contentDescription = null, tint = CyberCyan)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    "SYSTEM SURFACES & BRIEFINGS",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = TextPrimary
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { viewModel.requestQuickSettingsTile() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonDarkContainer),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("add_qs_tile_button")
+                                ) {
+                                    Text("Add QS Tile", style = MaterialTheme.typography.labelSmall)
+                                }
+                                Button(
+                                    onClick = { viewModel.requestPinHomeWidget() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonDarkContainer),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("pin_home_widget_button")
+                                ) {
+                                    Text("Pin Widget", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            SecurityToggleRow("Opt-in Proactive Briefings", prefs.proactiveBriefingsEnabled) { enable ->
+                                if (enable && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                    ContextCompat.checkSelfPermission(
+                                        context,
+                                        Manifest.permission.POST_NOTIFICATIONS
+                                    ) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                } else {
+                                    viewModel.setProactiveBriefings(enable)
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.refreshBriefingNow(forceNotify = true) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("generate_briefing_button")
+                            ) {
+                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = CyberCyan)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Generate Briefing Now", color = CyberCyan)
+                            }
+                        }
+                    }
+
                     // Permission & Special Access Manager
                     Text("PERMISSION & SPECIAL ACCESS MANAGER", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                     PermissionRow("Microphone", perms.microphoneGranted) { viewModel.openAppDetailsSettings() }
                     PermissionRow("Camera", perms.cameraGranted) { viewModel.openAppDetailsSettings() }
+                    PermissionRow("Notifications", perms.notificationsGranted) { viewModel.openAppDetailsSettings() }
                     PermissionRow("Write System Brightness", perms.writeSettingsGranted) { viewModel.openWriteSettings() }
                     PermissionRow("Notification Listener", perms.notificationListenerEnabled) { viewModel.openNotificationListenerSettings() }
                     PermissionRow("Accessibility Assist", perms.accessibilityServiceEnabled) {
@@ -357,7 +444,7 @@ fun MonitorSecurityScreen(
                         onClick = { AuthManager.signOut(credentialManager, scope) },
                         modifier = Modifier.fillMaxWidth().minimumInteractiveComponentSize().testTag("sign_out_button")
                     ) {
-                        Icon(Icons.Default.Logout, contentDescription = "Sign Out", tint = CrimsonLaser)
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign Out", tint = CrimsonLaser)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Sign Out of Ultron Omega", color = CrimsonLaser)
                     }

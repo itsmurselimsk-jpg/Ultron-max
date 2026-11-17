@@ -25,6 +25,12 @@ interface UltronDao {
     @Query("DELETE FROM memories WHERE id = :id AND userId = :userId")
     suspend fun deleteMemory(id: String, userId: String)
 
+    @Query("SELECT COUNT(*) FROM memories WHERE userId = :userId")
+    suspend fun countMemoriesForUser(userId: String): Int
+
+    @Query("SELECT COUNT(*) FROM memories WHERE userId = :userId AND pinned = 1")
+    suspend fun countPinnedMemoriesForUser(userId: String): Int
+
     // Conversations & Messages
     @Query("SELECT * FROM conversations WHERE userId = :userId ORDER BY updatedAt DESC")
     fun observeConversations(userId: String): Flow<List<ConversationEntity>>

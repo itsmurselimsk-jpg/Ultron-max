@@ -5,6 +5,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -52,7 +54,15 @@ data class UserPreferencesSnapshot(
     val cloudSyncEnabled: Boolean = true,
     val hasGitHubToken: Boolean = false,
     val preferredModelTier: String = "AUTO",
-    val accessibilityConsentAccepted: Boolean = false
+    val accessibilityConsentAccepted: Boolean = false,
+    val proactiveBriefingsEnabled: Boolean = false,
+    val briefingIntervalHours: Int = 12,
+    val latestBriefingTitle: String = "",
+    val latestBriefingBody: String = "",
+    val latestBriefingTimestamp: Long = 0L,
+    val briefingDismissed: Boolean = false,
+    val widgetTorchActive: Boolean = false,
+    val widgetEmergencyStop: Boolean = false
 )
 
 class SecureCredentialStore(
@@ -73,6 +83,14 @@ class SecureCredentialStore(
         val CLOUD_SYNC_ENABLED = booleanPreferencesKey("cloud_sync_enabled")
         val PREFERRED_MODEL_TIER = stringPreferencesKey("preferred_model_tier")
         val ACCESSIBILITY_CONSENT = booleanPreferencesKey("accessibility_consent")
+        val PROACTIVE_BRIEFINGS = booleanPreferencesKey("proactive_briefings")
+        val BRIEFING_INTERVAL_HOURS = intPreferencesKey("briefing_interval_hours")
+        val LATEST_BRIEFING_TITLE = stringPreferencesKey("latest_briefing_title")
+        val LATEST_BRIEFING_BODY = stringPreferencesKey("latest_briefing_body")
+        val LATEST_BRIEFING_TS = longPreferencesKey("latest_briefing_ts")
+        val BRIEFING_DISMISSED = booleanPreferencesKey("briefing_dismissed")
+        val WIDGET_TORCH_ACTIVE = booleanPreferencesKey("widget_torch_active")
+        val WIDGET_EMERGENCY_STOP = booleanPreferencesKey("widget_emergency_stop")
     }
 
     val preferencesFlow: Flow<UserPreferencesSnapshot> = context.ultronPrefsDataStore.data.map { prefs ->
@@ -89,7 +107,15 @@ class SecureCredentialStore(
             cloudSyncEnabled = prefs[Keys.CLOUD_SYNC_ENABLED] ?: true,
             hasGitHubToken = !prefs[Keys.ENCRYPTED_GITHUB_PAT].isNullOrBlank(),
             preferredModelTier = prefs[Keys.PREFERRED_MODEL_TIER] ?: "AUTO",
-            accessibilityConsentAccepted = prefs[Keys.ACCESSIBILITY_CONSENT] ?: false
+            accessibilityConsentAccepted = prefs[Keys.ACCESSIBILITY_CONSENT] ?: false,
+            proactiveBriefingsEnabled = prefs[Keys.PROACTIVE_BRIEFINGS] ?: false,
+            briefingIntervalHours = prefs[Keys.BRIEFING_INTERVAL_HOURS] ?: 12,
+            latestBriefingTitle = prefs[Keys.LATEST_BRIEFING_TITLE] ?: "",
+            latestBriefingBody = prefs[Keys.LATEST_BRIEFING_BODY] ?: "",
+            latestBriefingTimestamp = prefs[Keys.LATEST_BRIEFING_TS] ?: 0L,
+            briefingDismissed = prefs[Keys.BRIEFING_DISMISSED] ?: false,
+            widgetTorchActive = prefs[Keys.WIDGET_TORCH_ACTIVE] ?: false,
+            widgetEmergencyStop = prefs[Keys.WIDGET_EMERGENCY_STOP] ?: false
         )
     }
 
@@ -154,6 +180,38 @@ class SecureCredentialStore(
     suspend fun setAccessibilityConsentAccepted(accepted: Boolean) {
         context.ultronPrefsDataStore.edit { prefs ->
             prefs[Keys.ACCESSIBILITY_CONSENT] = accepted
+        }
+    }
+
+    suspend fun updateBriefingPreference(enabled: Boolean, intervalHours: Int = 12) {
+        context.ultronPrefsDataStore.edit { prefs ->
+            prefs[Keys.PROACTIVE_BRIEFINGS] = enabled
+            prefs[Keys.BRIEFING_INTERVAL_HOURS] = intervalHours.coerceIn(1, 24)
+        }
+    }
+
+    suspend fun saveBriefingSnapshot(title: String, body: String, timestamp: Long) {
+        context.ultronPrefsDataStore.edit { prefs ->
+            prefs[Keys.LATEST_BRIEFING_TITLE] = title.take(120)
+            prefs[Keys.LATEST_BRIEFING_BODY] = body.take(800)
+            prefs[Keys.LATEST_BRIEFING_TS] = timestamp
+            prefs[Keys.BRIEFING_DISMISSED] = false
+        }
+    }
+
+    suspend fun dismissBriefing(dismissed: Boolean) {
+        context.ultronPrefsDataStore.edit { prefs ->
+            prefs[Keys.BRIEFING_DISMISSED] = dismissed
+        }
+    }
+
+    suspend fun updateWidgetStatus(
+        torchActive: Boolean? = null,
+        emergencyStop: Boolean? = null
+    ) {
+        context.ultronPrefsDataStore.edit { prefs ->
+            if (torchActive != null) prefs[Keys.WIDGET_TORCH_ACTIVE] = torchActive
+            if (emergencyStop != null) prefs[Keys.WIDGET_EMERGENCY_STOP] = emergencyStop
         }
     }
 }

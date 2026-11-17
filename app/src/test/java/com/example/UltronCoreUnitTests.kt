@@ -13,6 +13,9 @@ import com.example.security.CryptoManager
 import com.example.security.RiskEngine
 import com.example.security.RiskLevel
 import com.example.security.RiskPolicyLevel
+import com.example.security.SecureCredentialStore
+import com.example.system.BriefingScheduler
+import com.example.system.UltronIntentActions
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -157,5 +160,33 @@ class UltronCoreUnitTests {
         assertEquals(2, logs.size)
         assertNotEquals(logs[0].integrityHash, logs[1].integrityHash)
         assertEquals(64, logs[0].integrityHash.length)
+    }
+
+    @Test
+    fun `briefing scheduler persists tactical snapshot and widget flags cleanly`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val store = SecureCredentialStore(context, cryptoManager)
+        store.updateBriefingPreference(enabled = true, intervalHours = 6)
+        store.updateWidgetStatus(torchActive = false, emergencyStop = true)
+
+        val (title, body) = BriefingScheduler.generateAndDispatch(
+            context = context,
+            userIdOverride = "test_uid",
+            forceNotify = false
+        )
+        assertTrue(title.contains("E-STOP ENGAGED"))
+        assertTrue(body.contains("Power:"))
+
+        val prefs = store.preferencesFlow.first()
+        assertTrue(prefs.proactiveBriefingsEnabled)
+        assertEquals(6, prefs.briefingIntervalHours)
+        assertEquals(title, prefs.latestBriefingTitle)
+        assertFalse(prefs.briefingDismissed)
+
+        val launchIntent = UltronIntentActions.createLaunchIntent(context, UltronIntentActions.ACTION_LAUNCH_VOICE_CORE)
+        assertEquals(
+            UltronIntentActions.ACTION_LAUNCH_VOICE_CORE,
+            launchIntent.getStringExtra(UltronIntentActions.EXTRA_ULTRON_ACTION)
+        )
     }
 }

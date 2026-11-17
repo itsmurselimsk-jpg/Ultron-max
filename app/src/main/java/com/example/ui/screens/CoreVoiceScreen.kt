@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -25,12 +26,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.AddComment
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -63,6 +64,7 @@ import com.example.UltronViewModel
 import com.example.security.VoiceLanguage
 import com.example.ui.components.EmergencyStopButton
 import com.example.ui.components.LiveAudioWaveform
+import com.example.ui.components.ProactiveBriefingCard
 import com.example.ui.components.TacticalStatusChip
 import com.example.ui.components.UltronNeuralCore
 import com.example.ui.theme.CharcoalDeep
@@ -324,7 +326,7 @@ fun CoreVoiceScreen(
                         modifier = Modifier.minimumInteractiveComponentSize().testTag("tts_toggle_button")
                     ) {
                         Icon(
-                            imageVector = if (prefs.ttsEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            imageVector = if (prefs.ttsEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                             contentDescription = "Toggle Male Voice Output",
                             tint = if (prefs.ttsEnabled) CrimsonLaser else TextMuted
                         )
@@ -354,7 +356,23 @@ fun CoreVoiceScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        AnimatedVisibility(
+            visible = !prefs.briefingDismissed && prefs.latestBriefingBody.isNotBlank()
+        ) {
+            Column {
+                ProactiveBriefingCard(
+                    title = prefs.latestBriefingTitle,
+                    body = prefs.latestBriefingBody,
+                    timestamp = prefs.latestBriefingTimestamp,
+                    onSpeak = { viewModel.speakLatestBriefing() },
+                    onRefresh = { viewModel.refreshBriefingNow(forceNotify = false) },
+                    onDismiss = { viewModel.dismissBriefingCard() }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
 
         // Conversation Stream
         LazyColumn(
