@@ -1,0 +1,6 @@
+{
+  "name": "Ultron Omega",
+  "description": "Personal Android AI ecosystem with multimodal intelligence, multilingual voice, encrypted memory, autonomous agents, and system security.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Ultron Omega</string>
+    <string name="voice_service_label">Ultron Omega Voice Core</string>
+    <string name="notification_listener_label">Ultron Omega Notification Assistant</string>
+    <string name="accessibility_service_label">Ultron Omega Assistive Actions</string>
+    <string name="accessibility_service_description">Opt-in assistant bridge enabling Ultron Omega to read active screen context and perform user-approved navigation actions (Back, Home, Recents, Notifications) when explicitly requested.</string>
+    <string name="error_auth_required">Google Sign-In is required to sync encrypted data.</string>
+    <string name="error_biometric_failed">Biometric verification failed or was cancelled.</string>
+    <string name="error_emergency_stop">Emergency Stop engaged. All autonomous agents and voice loops halted.</string>
+</resources>

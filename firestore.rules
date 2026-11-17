@@ -1,0 +1,139 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity Validators
+    function isValidMemory(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.category in ['FACT', 'PREFERENCE', 'EPISODIC', 'INSTRUCTION'] &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+             data.encryptedContent is string && data.encryptedContent.size() >= 1 && data.encryptedContent.size() <= 20000 &&
+             data.searchKeywords is string && data.searchKeywords.size() <= 500 &&
+             data.importance is int && data.importance >= 1 && data.importance <= 10 &&
+             data.pinned is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidConversation(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+             data.modelTier is string && data.modelTier.size() >= 1 && data.modelTier.size() <= 60 &&
+             data.languageCode is string && data.languageCode.size() >= 2 && data.languageCode.size() <= 16 &&
+             data.lastMessagePreview is string && data.lastMessagePreview.size() <= 1000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCitation(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.query is string && data.query.size() >= 1 && data.query.size() <= 400 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 240 &&
+             data.url is string && data.url.size() >= 1 && data.url.size() <= 1000 &&
+             data.snippet is string && data.snippet.size() <= 2000 &&
+             data.summary is string && data.summary.size() <= 4000 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidAuditLog(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.actor in ['USER', 'AGENT', 'SYSTEM'] &&
+             data.action is string && data.action.size() >= 1 && data.action.size() <= 120 &&
+             data.riskLevel in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] &&
+             data.outcome in ['APPROVED', 'DENIED', 'EXECUTED', 'BLOCKED', 'STOPPED'] &&
+             data.details is string && data.details.size() <= 1000 &&
+             data.integrityHash is string && data.integrityHash.size() >= 1 && data.integrityHash.size() <= 128 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // Per-User Collections
+    match /users/{userId} {
+      allow read, write: if false;
+
+      match /memories/{memoryId} {
+        allow get: if isOwner(userId) && isValidId(memoryId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(memoryId) &&
+                         incoming().keys().hasAll(['userId', 'category', 'title', 'encryptedContent', 'searchKeywords', 'importance', 'pinned', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'category', 'title', 'encryptedContent', 'searchKeywords', 'importance', 'pinned', 'createdAt', 'updatedAt']) &&
+                         isValidMemory(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(memoryId) &&
+                         isValidMemory(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['category', 'title', 'encryptedContent', 'searchKeywords', 'importance', 'pinned', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(memoryId);
+      }
+
+      match /conversations/{conversationId} {
+        allow get: if isOwner(userId) && isValidId(conversationId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(conversationId) &&
+                         incoming().keys().hasAll(['userId', 'title', 'modelTier', 'languageCode', 'lastMessagePreview', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'title', 'modelTier', 'languageCode', 'lastMessagePreview', 'createdAt', 'updatedAt']) &&
+                         isValidConversation(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(conversationId) &&
+                         isValidConversation(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['title', 'modelTier', 'languageCode', 'lastMessagePreview', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(conversationId);
+      }
+
+      match /citations/{citationId} {
+        allow get: if isOwner(userId) && isValidId(citationId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(citationId) &&
+                         incoming().keys().hasAll(['userId', 'query', 'title', 'url', 'snippet', 'summary', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'query', 'title', 'url', 'snippet', 'summary', 'createdAt']) &&
+                         isValidCitation(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(citationId);
+      }
+
+      match /audit_logs/{logId} {
+        allow get: if isOwner(userId) && isValidId(logId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(logId) &&
+                         incoming().keys().hasAll(['userId', 'actor', 'action', 'riskLevel', 'outcome', 'details', 'integrityHash', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'actor', 'action', 'riskLevel', 'outcome', 'details', 'integrityHash', 'createdAt']) &&
+                         isValidAuditLog(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(logId);
+      }
+    }
+  }
+}

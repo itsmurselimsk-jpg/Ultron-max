@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "MemoryCloudDoc": {
+      "title": "MemoryCloudDoc",
+      "description": "Encrypted long-term memory record synced for an authenticated Ultron Omega user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "category": {
+          "type": "string",
+          "enum": ["FACT", "PREFERENCE", "EPISODIC", "INSTRUCTION"],
+          "description": "Memory category."
+        },
+        "title": { "type": "string", "description": "Short title for display and indexing." },
+        "encryptedContent": { "type": "string", "description": "AES-256-GCM encrypted payload (Base64 IV + ciphertext)." },
+        "searchKeywords": { "type": "string", "description": "Tokenized non-sensitive keywords for local/cloud filtering." },
+        "importance": { "type": "integer", "description": "Importance weight from 1 to 10." },
+        "pinned": { "type": "boolean", "description": "Whether memory is pinned to active system context." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on last update." }
+      },
+      "required": ["userId", "category", "title", "encryptedContent", "searchKeywords", "importance", "pinned", "createdAt", "updatedAt"]
+    },
+    "ConversationCloudDoc": {
+      "title": "ConversationCloudDoc",
+      "description": "Synced conversation metadata and latest summary.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "title": { "type": "string", "description": "Conversation title." },
+        "modelTier": { "type": "string", "description": "Last Gemini model tier used." },
+        "languageCode": { "type": "string", "description": "Active speech/conversation locale." },
+        "lastMessagePreview": { "type": "string", "description": "Short preview of latest message." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on last update." }
+      },
+      "required": ["userId", "title", "modelTier", "languageCode", "lastMessagePreview", "createdAt", "updatedAt"]
+    },
+    "CitationCloudDoc": {
+      "title": "CitationCloudDoc",
+      "description": "Saved web research citation extracted from Google Search grounding or URL analysis.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "query": { "type": "string", "description": "Research query." },
+        "title": { "type": "string", "description": "Source page title." },
+        "url": { "type": "string", "description": "Source URL." },
+        "snippet": { "type": "string", "description": "Extracted excerpt." },
+        "summary": { "type": "string", "description": "AI research summary." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." }
+      },
+      "required": ["userId", "query", "title", "url", "snippet", "summary", "createdAt"]
+    },
+    "AuditSummaryCloudDoc": {
+      "title": "AuditSummaryCloudDoc",
+      "description": "Append-only security audit event recorded by RiskEngine.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "actor": { "type": "string", "enum": ["USER", "AGENT", "SYSTEM"] },
+        "action": { "type": "string", "description": "Action identifier." },
+        "riskLevel": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        "outcome": { "type": "string", "enum": ["APPROVED", "DENIED", "EXECUTED", "BLOCKED", "STOPPED"] },
+        "details": { "type": "string", "description": "Human-readable audit details." },
+        "integrityHash": { "type": "string", "description": "SHA-256 chain hash." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." }
+      },
+      "required": ["userId", "actor", "action", "riskLevel", "outcome", "details", "integrityHash", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/memories/{memoryId}": {
+      "schema": { "$ref": "#/entities/MemoryCloudDoc" },
+      "description": "Per-user encrypted long-term memories."
+    },
+    "/users/{userId}/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/ConversationCloudDoc" },
+      "description": "Per-user conversation history metadata."
+    },
+    "/users/{userId}/citations/{citationId}": {
+      "schema": { "$ref": "#/entities/CitationCloudDoc" },
+      "description": "Per-user saved web research citations."
+    },
+    "/users/{userId}/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditSummaryCloudDoc" },
+      "description": "Per-user append-only security audit trail."
+    }
+  }
+}
