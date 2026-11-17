@@ -8,6 +8,7 @@ import com.example.data.remote.UrlContentFetcher
 import com.example.intelligence.IntelligenceEngine
 import com.example.intelligence.ModelTier
 import com.example.memory.MemoryRepository
+import com.example.security.ToolInputValidator
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Tool
@@ -144,14 +145,16 @@ class ResearchEngine(
         )
     }
 
-    fun openInBrowser(url: String) {
-        val normalized = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
-        runCatching {
+    fun openInBrowser(url: String): Result<Unit> {
+        val validated = ToolInputValidator.validatePublicHttpUrl(url).getOrElse { err ->
+            return Result.failure(err)
+        }
+        return runCatching {
             val customTabsIntent = CustomTabsIntent.Builder()
                 .setShowTitle(true)
                 .build()
             customTabsIntent.intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            customTabsIntent.launchUrl(context, Uri.parse(normalized))
+            customTabsIntent.launchUrl(context, Uri.parse(validated))
         }
     }
 

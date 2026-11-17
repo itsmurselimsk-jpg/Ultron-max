@@ -21,6 +21,11 @@ val EmeraldSignal = Color(0xFF10B981)
 val EmeraldContainer = Color(0xFF063324)
 
 val CyberCyan = Color(0xFF38BDF8)
+val NeonCyan = Color(0xFF06B6D4)
+val ElectricBlue = Color(0xFF3B82F6)
+val ElectricBlueContainer = Color(0xFF0B2249)
+val UltravioletPurple = Color(0xFF8B5CF6)
+val PurpleContainer = Color(0xFF231347)
 
 val TextPrimary = Color(0xFFF4F5F7)
 val TextSecondary = Color(0xFFA0A8B8)

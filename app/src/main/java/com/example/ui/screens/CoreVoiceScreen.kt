@@ -74,13 +74,16 @@ import com.example.ui.theme.CrimsonCore
 import com.example.ui.theme.CrimsonDarkContainer
 import com.example.ui.theme.CrimsonLaser
 import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.EmberAmber
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.HairlineBorder
+import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ObsidianVoid
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.UltravioletPurple
 import com.example.voice.VoiceState
 
 @Composable
@@ -228,12 +231,13 @@ fun CoreVoiceScreen(
                                 label = coreMode.name,
                                 color = when (coreMode) {
                                     CoreVisualMode.IDLE -> EmeraldSignal
-                                    CoreVisualMode.LISTENING -> CyberCyan
-                                    CoreVisualMode.THINKING -> EmberAmber
-                                    CoreVisualMode.SPEAKING, CoreVisualMode.ALERT -> CrimsonLaser
+                                    CoreVisualMode.LISTENING -> NeonCyan
+                                    CoreVisualMode.THINKING -> ElectricBlue
+                                    CoreVisualMode.SPEAKING -> UltravioletPurple
+                                    CoreVisualMode.ALERT -> CrimsonLaser
                                 }
                             )
-                            TacticalStatusChip(label = prefs.voiceLanguage.shortLabel, color = TextPrimary)
+                            TacticalStatusChip(label = prefs.voiceLanguage.shortLabel, color = CyberCyan)
                         }
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -241,7 +245,7 @@ fun CoreVoiceScreen(
                         LiveAudioWaveform(
                             bars = waveformBars,
                             isActive = voiceState == VoiceState.LISTENING || voiceState == VoiceState.WAKE_LISTENING || isTtsSpeaking,
-                            accentColor = if (isTtsSpeaking) CrimsonLaser else CyberCyan
+                            accentColor = if (isTtsSpeaking) CrimsonLaser else NeonCyan
                         )
 
                         Spacer(modifier = Modifier.height(6.dp))
@@ -447,13 +451,13 @@ fun CoreVoiceScreen(
                         Surface(
                             color = CharcoalElevated,
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, EmberAmber.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, UltravioletPurple.copy(alpha = 0.55f)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = "Synthesizing intelligence & retrieving semantic memories...",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = EmberAmber,
+                                color = ElectricBlue,
                                 modifier = Modifier.padding(12.dp)
                             )
                         }
@@ -464,7 +468,7 @@ fun CoreVoiceScreen(
                         Surface(
                             color = CharcoalElevated,
                             shape = RoundedCornerShape(14.dp),
-                            border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.45f)),
+                            border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.55f)),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {

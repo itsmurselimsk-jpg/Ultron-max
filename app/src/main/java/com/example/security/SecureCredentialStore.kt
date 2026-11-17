@@ -62,7 +62,9 @@ data class UserPreferencesSnapshot(
     val latestBriefingTimestamp: Long = 0L,
     val briefingDismissed: Boolean = false,
     val widgetTorchActive: Boolean = false,
-    val widgetEmergencyStop: Boolean = false
+    val widgetEmergencyStop: Boolean = false,
+    val activeKeyVersion: Int = 1,
+    val lastKeyRotationAt: Long = 0L
 )
 
 class SecureCredentialStore(
@@ -91,6 +93,8 @@ class SecureCredentialStore(
         val BRIEFING_DISMISSED = booleanPreferencesKey("briefing_dismissed")
         val WIDGET_TORCH_ACTIVE = booleanPreferencesKey("widget_torch_active")
         val WIDGET_EMERGENCY_STOP = booleanPreferencesKey("widget_emergency_stop")
+        val ACTIVE_KEY_VERSION = intPreferencesKey("active_key_version")
+        val LAST_KEY_ROTATION_AT = longPreferencesKey("last_key_rotation_at")
     }
 
     val preferencesFlow: Flow<UserPreferencesSnapshot> = context.ultronPrefsDataStore.data.map { prefs ->
@@ -115,7 +119,9 @@ class SecureCredentialStore(
             latestBriefingTimestamp = prefs[Keys.LATEST_BRIEFING_TS] ?: 0L,
             briefingDismissed = prefs[Keys.BRIEFING_DISMISSED] ?: false,
             widgetTorchActive = prefs[Keys.WIDGET_TORCH_ACTIVE] ?: false,
-            widgetEmergencyStop = prefs[Keys.WIDGET_EMERGENCY_STOP] ?: false
+            widgetEmergencyStop = prefs[Keys.WIDGET_EMERGENCY_STOP] ?: false,
+            activeKeyVersion = (prefs[Keys.ACTIVE_KEY_VERSION] ?: 1).coerceAtLeast(1),
+            lastKeyRotationAt = prefs[Keys.LAST_KEY_ROTATION_AT] ?: 0L
         )
     }
 
@@ -212,6 +218,25 @@ class SecureCredentialStore(
         context.ultronPrefsDataStore.edit { prefs ->
             if (torchActive != null) prefs[Keys.WIDGET_TORCH_ACTIVE] = torchActive
             if (emergencyStop != null) prefs[Keys.WIDGET_EMERGENCY_STOP] = emergencyStop
+        }
+    }
+
+    suspend fun updateKeyVersion(version: Int, rotatedAt: Long) {
+        context.ultronPrefsDataStore.edit { prefs ->
+            prefs[Keys.ACTIVE_KEY_VERSION] = version.coerceAtLeast(1)
+            prefs[Keys.LAST_KEY_ROTATION_AT] = rotatedAt
+        }
+    }
+
+    suspend fun reencryptPatIfNeeded() {
+        context.ultronPrefsDataStore.edit { prefs ->
+            val currentEnc = prefs[Keys.ENCRYPTED_GITHUB_PAT]
+            if (!currentEnc.isNullOrBlank() && cryptoManager.needsReencryption(currentEnc)) {
+                val plain = runCatching { cryptoManager.decrypt(currentEnc) }.getOrNull()
+                if (!plain.isNullOrBlank()) {
+                    prefs[Keys.ENCRYPTED_GITHUB_PAT] = cryptoManager.encrypt(plain)
+                }
+            }
         }
     }
 }

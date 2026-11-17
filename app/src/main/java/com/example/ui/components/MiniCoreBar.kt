@@ -51,13 +51,16 @@ import com.example.ui.theme.CrimsonCore
 import com.example.ui.theme.CrimsonDarkContainer
 import com.example.ui.theme.CrimsonLaser
 import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.EmberAmber
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.HairlineBorder
+import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ObsidianVoid
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.UltravioletPurple
 import com.example.voice.VoiceState
 import java.text.DateFormat
 import java.util.Date
@@ -89,9 +92,10 @@ fun PersistentMiniCoreBar(
 
     val beaconColor = when (mode) {
         CoreVisualMode.IDLE -> EmeraldSignal
-        CoreVisualMode.LISTENING -> CyberCyan
-        CoreVisualMode.THINKING -> EmberAmber
-        CoreVisualMode.SPEAKING, CoreVisualMode.ALERT -> CrimsonLaser
+        CoreVisualMode.LISTENING -> NeonCyan
+        CoreVisualMode.THINKING -> ElectricBlue
+        CoreVisualMode.SPEAKING -> UltravioletPurple
+        CoreVisualMode.ALERT -> CrimsonLaser
     }
 
     val isListening = voiceState == VoiceState.LISTENING || voiceState == VoiceState.WAKE_LISTENING
@@ -108,7 +112,15 @@ fun PersistentMiniCoreBar(
     Surface(
         color = CharcoalElevated,
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, if (emergencyStop) CrimsonLaser else HairlineBorder),
+        border = BorderStroke(
+            1.dp,
+            when {
+                emergencyStop -> CrimsonLaser
+                mode == CoreVisualMode.THINKING -> ElectricBlue.copy(alpha = 0.65f)
+                isListening -> NeonCyan.copy(alpha = 0.65f)
+                else -> HairlineBorder
+            }
+        ),
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)

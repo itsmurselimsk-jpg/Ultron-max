@@ -25,6 +25,12 @@ enum class VoiceState {
     ERROR
 }
 
+sealed interface VoiceRecoveryDecision {
+    data class Retry(val delayMs: Long, val message: String) : VoiceRecoveryDecision
+    data class Fail(val message: String) : VoiceRecoveryDecision
+    data object SilentRearm : VoiceRecoveryDecision
+}
+
 class VoiceEngine(
     private val context: Context,
     val vadEngine: AudioVadEngine,
@@ -32,6 +38,8 @@ class VoiceEngine(
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var speechRecognizer: SpeechRecognizer? = null
+    private var pendingRestartRunnable: Runnable? = null
+    private var watchdogRunnable: Runnable? = null
 
     private val _voiceState = MutableStateFlow(VoiceState.IDLE)
     val voiceState: StateFlow<VoiceState> = _voiceState.asStateFlow()
@@ -44,12 +52,26 @@ class VoiceEngine(
 
     private var activeLanguage: VoiceLanguage = VoiceLanguage.ENGLISH
     private var activeWakeWord: String = "ultron"
+    private var requireWakeWordInSession: Boolean = false
     private var wakeWordOnlyMode: Boolean = false
     private var continuousMode: Boolean = false
+    private var consecutiveErrorCount: Int = 0
     private var onFinalUtterance: ((String) -> Unit)? = null
 
     val isSpeechRecognitionAvailable: Boolean
         get() = SpeechRecognizer.isRecognitionAvailable(context)
+
+    fun syncTtsSpeakingState(isSpeaking: Boolean) {
+        if (isSpeaking) {
+            _voiceState.value = VoiceState.SPEAKING
+        } else if (_voiceState.value == VoiceState.SPEAKING) {
+            if (continuousMode) {
+                resumeContinuousAfterTtsIfEnabled()
+            } else {
+                _voiceState.value = VoiceState.IDLE
+            }
+        }
+    }
 
     fun startListening(
         language: VoiceLanguage,
@@ -69,10 +91,13 @@ class VoiceEngine(
             return
         }
 
+        cancelScheduledRunnables()
         activeLanguage = language
         activeWakeWord = wakeWord.trim().lowercase().ifBlank { "ultron" }
+        requireWakeWordInSession = requireWakeWord
         wakeWordOnlyMode = requireWakeWord
         continuousMode = continuous
+        consecutiveErrorCount = 0
         onFinalUtterance = onTranscriptReady
         _lastError.value = null
 
@@ -81,16 +106,61 @@ class VoiceEngine(
         }
     }
 
+    private fun cancelScheduledRunnables() {
+        pendingRestartRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingRestartRunnable = null
+        watchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+        watchdogRunnable = null
+    }
+
+    private fun scheduleRestart(delayMs: Long) {
+        cancelScheduledRunnables()
+        val runnable = Runnable {
+            pendingRestartRunnable = null
+            if (continuousMode) {
+                launchRecognizerInternal()
+            }
+        }
+        pendingRestartRunnable = runnable
+        mainHandler.postDelayed(runnable, delayMs)
+    }
+
+    private fun armWatchdog() {
+        watchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+        val wd = Runnable {
+            watchdogRunnable = null
+            if (_voiceState.value == VoiceState.LISTENING ||
+                _voiceState.value == VoiceState.WAKE_LISTENING ||
+                _voiceState.value == VoiceState.PROCESSING
+            ) {
+                runCatching { speechRecognizer?.cancel() }
+                if (continuousMode && consecutiveErrorCount < MAX_CONSECUTIVE_ERRORS) {
+                    consecutiveErrorCount++
+                    scheduleRestart(backoffDelayForAttempt(consecutiveErrorCount))
+                } else {
+                    _voiceState.value = VoiceState.IDLE
+                    _lastError.value = "Voice session timed out waiting for audio."
+                }
+            }
+        }
+        watchdogRunnable = wd
+        mainHandler.postDelayed(wd, RECOGNITION_WATCHDOG_MS)
+    }
+
     private fun launchRecognizerInternal() {
+        cancelScheduledRunnables()
         runCatching {
             speechRecognizer?.destroy()
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context.applicationContext).apply {
                 setRecognitionListener(object : RecognitionListener {
                     override fun onReadyForSpeech(params: Bundle?) {
+                        consecutiveErrorCount = 0
                         _voiceState.value = if (wakeWordOnlyMode) VoiceState.WAKE_LISTENING else VoiceState.LISTENING
+                        armWatchdog()
                     }
 
                     override fun onBeginningOfSpeech() {
+                        armWatchdog()
                         if (ttsEngine.isSpeaking.value) {
                             ttsEngine.stop()
                         }
@@ -101,24 +171,36 @@ class VoiceEngine(
 
                     override fun onEndOfSpeech() {
                         _voiceState.value = VoiceState.PROCESSING
+                        armWatchdog()
                     }
 
                     override fun onError(error: Int) {
-                        val msg = mapRecognizerError(error)
-                        if (continuousMode && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
-                            _voiceState.value = if (wakeWordOnlyMode) VoiceState.WAKE_LISTENING else VoiceState.LISTENING
-                            mainHandler.postDelayed({
-                                if (continuousMode) launchRecognizerInternal()
-                            }, 350L)
-                        } else {
-                            _voiceState.value = VoiceState.IDLE
-                            if (error != SpeechRecognizer.ERROR_CLIENT) {
-                                _lastError.value = msg
+                        cancelScheduledRunnables()
+                        consecutiveErrorCount++
+                        when (val decision = classifyRecoveryDecision(error, continuousMode, consecutiveErrorCount)) {
+                            is VoiceRecoveryDecision.SilentRearm -> {
+                                consecutiveErrorCount = 0
+                                _voiceState.value = if (wakeWordOnlyMode) VoiceState.WAKE_LISTENING else VoiceState.LISTENING
+                                scheduleRestart(350L)
+                            }
+                            is VoiceRecoveryDecision.Retry -> {
+                                _lastError.value = decision.message
+                                _voiceState.value = if (wakeWordOnlyMode) VoiceState.WAKE_LISTENING else VoiceState.LISTENING
+                                scheduleRestart(decision.delayMs)
+                            }
+                            is VoiceRecoveryDecision.Fail -> {
+                                continuousMode = false
+                                _voiceState.value = if (error == SpeechRecognizer.ERROR_CLIENT) VoiceState.IDLE else VoiceState.ERROR
+                                if (error != SpeechRecognizer.ERROR_CLIENT) {
+                                    _lastError.value = decision.message
+                                }
                             }
                         }
                     }
 
                     override fun onResults(results: Bundle?) {
+                        cancelScheduledRunnables()
+                        consecutiveErrorCount = 0
                         val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
                         val spoken = matches.firstOrNull().orEmpty().trim()
                         _partialTranscript.value = ""
@@ -127,23 +209,12 @@ class VoiceEngine(
                             return
                         }
 
-                        if (wakeWordOnlyMode) {
-                            val lower = spoken.lowercase()
-                            if (lower.contains(activeWakeWord)) {
-                                val stripped = spoken.replace(
-                                    Regex("(?i).*?\\b${Regex.escape(activeWakeWord)}\\b[,:\\s]*"),
-                                    ""
-                                ).trim()
-                                val command = stripped.ifBlank { "Ultron, ready for orders." }
-                                wakeWordOnlyMode = false
-                                onFinalUtterance?.invoke(command)
-                                handlePostUtterance(dispatched = true)
-                            } else {
-                                handlePostUtterance(dispatched = false)
-                            }
-                        } else {
-                            onFinalUtterance?.invoke(spoken)
+                        val extracted = extractWakeWordCommand(spoken, activeWakeWord, wakeWordOnlyMode)
+                        if (extracted != null) {
+                            onFinalUtterance?.invoke(extracted)
                             handlePostUtterance(dispatched = true)
+                        } else {
+                            handlePostUtterance(dispatched = false)
                         }
                     }
 
@@ -172,6 +243,7 @@ class VoiceEngine(
             }
             speechRecognizer?.startListening(intent)
         }.onFailure { err ->
+            cancelScheduledRunnables()
             _voiceState.value = VoiceState.ERROR
             _lastError.value = err.localizedMessage ?: "Failed to start SpeechRecognizer."
         }
@@ -179,18 +251,19 @@ class VoiceEngine(
 
     private fun handlePostUtterance(dispatched: Boolean) {
         if (continuousMode && !dispatched) {
-            mainHandler.postDelayed({
-                if (continuousMode) launchRecognizerInternal()
-            }, 300L)
+            wakeWordOnlyMode = requireWakeWordInSession
+            scheduleRestart(300L)
         } else if (!continuousMode) {
             _voiceState.value = VoiceState.IDLE
         } else {
+            wakeWordOnlyMode = requireWakeWordInSession
             _voiceState.value = VoiceState.PROCESSING
         }
     }
 
     fun resumeContinuousAfterTtsIfEnabled() {
         if (continuousMode) {
+            wakeWordOnlyMode = requireWakeWordInSession
             mainHandler.post { launchRecognizerInternal() }
         } else {
             _voiceState.value = VoiceState.IDLE
@@ -215,10 +288,14 @@ class VoiceEngine(
     fun stopAll() {
         continuousMode = false
         wakeWordOnlyMode = false
+        requireWakeWordInSession = false
+        consecutiveErrorCount = 0
+        cancelScheduledRunnables()
         _partialTranscript.value = ""
         ttsEngine.stop()
         vadEngine.stopMonitoring()
         mainHandler.post {
+            cancelScheduledRunnables()
             runCatching { speechRecognizer?.stopListening() }
             runCatching { speechRecognizer?.destroy() }
             speechRecognizer = null
@@ -226,13 +303,66 @@ class VoiceEngine(
         }
     }
 
-    private fun mapRecognizerError(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_AUDIO -> "Audio capture error."
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required."
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition network error."
-        SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized."
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy."
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input detected."
-        else -> "Speech recognition error ($code)."
+    companion object {
+        const val MAX_CONSECUTIVE_ERRORS = 3
+        const val RECOGNITION_WATCHDOG_MS = 18_000L
+
+        fun backoffDelayForAttempt(attempt: Int): Long = when (attempt.coerceAtLeast(1)) {
+            1 -> 450L
+            2 -> 1000L
+            else -> 2000L
+        }
+
+        fun extractWakeWordCommand(
+            spoken: String,
+            wakeWord: String,
+            requireWakeWord: Boolean
+        ): String? {
+            val trimmed = spoken.trim()
+            if (trimmed.isBlank()) return null
+            if (!requireWakeWord) return trimmed
+            val cleanWake = wakeWord.trim().lowercase().ifBlank { "ultron" }
+            if (!trimmed.lowercase().contains(cleanWake)) return null
+            val stripped = trimmed.replace(
+                Regex("(?i).*?\\b${Regex.escape(cleanWake)}\\b[,:\\s]*"),
+                ""
+            ).trim()
+            return stripped.ifBlank { "Ultron, ready for orders." }
+        }
+
+        fun classifyRecoveryDecision(
+            errorCode: Int,
+            continuous: Boolean,
+            attemptCount: Int
+        ): VoiceRecoveryDecision {
+            val msg = mapRecognizerError(errorCode)
+            if (errorCode == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                return VoiceRecoveryDecision.Fail(msg)
+            }
+            if (continuous && (errorCode == SpeechRecognizer.ERROR_NO_MATCH || errorCode == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
+                return VoiceRecoveryDecision.SilentRearm
+            }
+            val isTransient = errorCode == SpeechRecognizer.ERROR_RECOGNIZER_BUSY ||
+                errorCode == SpeechRecognizer.ERROR_NETWORK ||
+                errorCode == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                errorCode == SpeechRecognizer.ERROR_AUDIO
+            if (continuous && isTransient && attemptCount <= MAX_CONSECUTIVE_ERRORS) {
+                return VoiceRecoveryDecision.Retry(
+                    delayMs = backoffDelayForAttempt(attemptCount),
+                    message = "$msg Retrying ($attemptCount/$MAX_CONSECUTIVE_ERRORS)..."
+                )
+            }
+            return VoiceRecoveryDecision.Fail(msg)
+        }
+
+        fun mapRecognizerError(code: Int): String = when (code) {
+            SpeechRecognizer.ERROR_AUDIO -> "Audio capture error."
+            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required."
+            SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech recognition network error."
+            SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized."
+            SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy."
+            SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input detected."
+            else -> "Speech recognition error ($code)."
+        }
     }
 }

@@ -66,6 +66,7 @@ import com.example.ui.theme.CrimsonCore
 import com.example.ui.theme.CrimsonDarkContainer
 import com.example.ui.theme.CrimsonLaser
 import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.EmberAmber
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.HairlineBorder
@@ -73,6 +74,7 @@ import com.example.ui.theme.ObsidianVoid
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.UltravioletPurple
 
 @Composable
 fun MemoryScreen(
@@ -82,6 +84,7 @@ fun MemoryScreen(
     val allMemories by viewModel.memories.collectAsStateWithLifecycle()
     val semanticResults by viewModel.semanticMemoryResults.collectAsStateWithLifecycle()
     val syncStatus by viewModel.cloudSyncStatus.collectAsStateWithLifecycle()
+    val prefs by viewModel.preferences.collectAsStateWithLifecycle()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("ALL") }
@@ -133,9 +136,9 @@ fun MemoryScreen(
                 Column {
                     Text("ENCRYPTED MEMORY VAULT", style = MaterialTheme.typography.headlineMedium, color = TextPrimary)
                     Text(
-                        text = "AES-256-GCM Keystore • $syncStatus",
+                        text = "AES-256-GCM KEY_V${prefs.activeKeyVersion} • $syncStatus",
                         style = MaterialTheme.typography.labelSmall,
-                        color = EmeraldSignal
+                        color = CyberCyan
                     )
                 }
             }

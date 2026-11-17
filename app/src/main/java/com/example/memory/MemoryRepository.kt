@@ -292,16 +292,22 @@ class MemoryRepository(
         syncToCloud: Boolean
     ): Result<Int> = try {
         val root = JSONObject(backupJson)
+        val format = root.optString("format")
+        require(format == "ULTRON_OMEGA_ENCRYPTED_BACKUP_V1") {
+            "Unsupported backup format: ${format.ifBlank { "unknown" }}"
+        }
         val ciphertext = root.getString("ciphertext")
         val decryptedArray = JSONArray(cryptoManager.decrypt(ciphertext))
         var imported = 0
         for (i in 0 until decryptedArray.length()) {
             val item = decryptedArray.getJSONObject(i)
+            val content = item.optString("content", "").trim()
+            if (content.isBlank()) continue
             saveMemory(
                 userId = userId,
                 category = item.optString("category", "FACT"),
                 title = item.optString("title", "Restored Memory"),
-                content = item.optString("content", ""),
+                content = content,
                 importance = item.optInt("importance", 5),
                 pinned = item.optBoolean("pinned", false),
                 syncToCloud = syncToCloud,
@@ -316,9 +322,64 @@ class MemoryRepository(
         Result.failure(e)
     }
 
+    /**
+     * Rotates the active AES-256-GCM key alias to a new version and re-encrypts
+     * all decryptable memories for the current user without losing readable records.
+     * Returns Pair(newKeyVersion, reencryptedCount).
+     */
+    suspend fun rotateMasterKeyAndReencrypt(
+        userId: String,
+        syncToCloud: Boolean
+    ): Result<Pair<Int, Int>> = try {
+        val existing = dao.getMemoriesOnce(userId)
+        val plaintexts = existing.mapNotNull { entity ->
+            val plain = runCatching { cryptoManager.decrypt(entity.encryptedContent) }.getOrNull()
+            if (plain != null) entity to plain else null
+        }
+
+        val newVersion = cryptoManager.rotateKey()
+        val now = System.currentTimeMillis()
+        val updatedEntities = mutableListOf<MemoryEntity>()
+
+        for ((entity, plain) in plaintexts) {
+            val newCipher = cryptoManager.encrypt(plain)
+            var synced = entity.syncedToCloud
+            if (syncToCloud && firestoreSync != null) {
+                val cloudResult = firestoreSync.upsertMemory(
+                    memoryId = entity.id,
+                    category = entity.category,
+                    title = entity.title,
+                    encryptedContent = newCipher,
+                    searchKeywords = entity.searchKeywords,
+                    importance = entity.importance,
+                    pinned = entity.pinned,
+                    isUpdate = true
+                )
+                synced = cloudResult.isSuccess
+            }
+            updatedEntities += entity.copy(
+                encryptedContent = newCipher,
+                syncedToCloud = synced,
+                updatedAt = now
+            )
+        }
+
+        if (updatedEntities.isNotEmpty()) {
+            dao.upsertMemories(updatedEntities)
+        }
+        Result.success(newVersion to updatedEntities.size)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+
     private fun MemoryEntity.toDecrypted(): DecryptedMemory {
-        val plain = runCatching { cryptoManager.decrypt(encryptedContent) }
-            .getOrElse { "[Encrypted with another device key]" }
+        val plain = try {
+            cryptoManager.decrypt(encryptedContent)
+        } catch (e: Exception) {
+            "[Encrypted with another device key]"
+        }
         return DecryptedMemory(
             id = id,
             userId = userId,

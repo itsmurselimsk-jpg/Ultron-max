@@ -4,7 +4,9 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -243,14 +245,23 @@ fun UltronApp(
 
             val activeConfirmation = pendingAgentConfirm ?: pendingChatConfirm
             if (activeConfirmation != null) {
+                val isAgentConfirm = pendingAgentConfirm != null
                 RiskConfirmationDialog(
                     request = activeConfirmation,
                     biometricAuthManager = container.biometricAuthManager,
                     onResolve = { approved ->
-                        if (pendingAgentConfirm != null) {
-                            viewModel.resolveAgentConfirmation(approved)
+                        if (isAgentConfirm) {
+                            viewModel.resolveAgentConfirmation(
+                                approved = approved,
+                                expectedTaskId = activeConfirmation.taskId,
+                                expectedStepId = activeConfirmation.stepId
+                            )
                         } else {
-                            viewModel.resolveChatToolConfirmation(approved)
+                            viewModel.resolveChatToolConfirmation(
+                                approved = approved,
+                                expectedTaskId = activeConfirmation.taskId,
+                                expectedStepId = activeConfirmation.stepId
+                            )
                         }
                     },
                     onError = { err -> biometricError = err }
@@ -506,8 +517,8 @@ private fun BiometricGateScreen(
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
     val activity = context.findActivity() as? FragmentActivity
-    val canBiometric = remember(activity) {
-        activity != null && container.biometricAuthManager.canAuthenticate(activity)
+    var canBiometric by remember(activity) {
+        mutableStateOf(activity != null && container.biometricAuthManager.canAuthenticate(activity))
     }
 
     LaunchedEffect(canBiometric) {
@@ -557,7 +568,7 @@ private fun BiometricGateScreen(
                         text = if (canBiometric) {
                             "Authenticate with device biometrics or screen lock credential to proceed."
                         } else {
-                            "Biometric/credential lock is not enrolled on this device."
+                            "Fail-Closed Lock: Biometrics or a device screen lock are not enrolled on this device. Configure a PIN, pattern, or biometric in Android Settings to unlock the vault."
                         },
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
@@ -565,27 +576,62 @@ private fun BiometricGateScreen(
                     )
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    Button(
-                        onClick = {
-                            if (canBiometric && activity != null) {
-                                container.biometricAuthManager.authenticate(
-                                    activity = activity,
-                                    title = "Unlock Ultron Omega",
-                                    subtitle = "Verify identity to access encrypted vault",
-                                    onSuccess = onUnlocked,
-                                    onError = onError
-                                )
-                            } else {
-                                onUnlocked()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CrimsonCore),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .minimumInteractiveComponentSize()
-                            .testTag("biometric_unlock_button")
-                    ) {
-                        Text(if (canBiometric) "Authenticate & Unlock" else "Continue")
+                    if (canBiometric) {
+                        Button(
+                            onClick = {
+                                if (activity != null && container.biometricAuthManager.canAuthenticate(activity)) {
+                                    container.biometricAuthManager.authenticate(
+                                        activity = activity,
+                                        title = "Unlock Ultron Omega",
+                                        subtitle = "Verify identity to access encrypted vault",
+                                        onSuccess = onUnlocked,
+                                        onError = onError
+                                    )
+                                } else {
+                                    canBiometric = false
+                                    onError("Device authentication became unavailable.")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CrimsonCore),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .testTag("biometric_unlock_button")
+                        ) {
+                            Text("Authenticate & Unlock")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Settings.ACTION_SECURITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CrimsonCore),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .testTag("biometric_settings_button")
+                        ) {
+                            Text("Open Security Settings")
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                canBiometric = activity != null && container.biometricAuthManager.canAuthenticate(activity)
+                                if (!canBiometric) {
+                                    onError("Still no screen lock or biometric enrolled.")
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .minimumInteractiveComponentSize()
+                                .testTag("biometric_recheck_button")
+                        ) {
+                            Text("Recheck Device Lock", color = TextPrimary)
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(10.dp))

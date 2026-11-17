@@ -1,5 +1,6 @@
 package com.example.data.remote
 
+import com.example.security.ToolInputValidator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -21,18 +22,18 @@ class UrlContentFetcher {
 
     suspend fun fetchReadableText(rawUrl: String): Result<FetchedUrlDocument> = withContext(Dispatchers.IO) {
         runCatching {
-            val normalizedUrl = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) {
-                rawUrl.trim()
-            } else {
-                "https://${rawUrl.trim()}"
-            }
+            val normalizedUrl = ToolInputValidator.validatePublicHttpUrl(rawUrl).getOrThrow()
 
             val request = Request.Builder()
                 .url(normalizedUrl)
-                .header("User-Agent", "UltronOmega-Research/1.0 (Android)")
+                .header("User-Agent", "UltronMax-Research/2.0 (Android)")
                 .build()
 
             client.newCall(request).execute().use { response ->
+                val finalHost = response.request.url.host
+                if (ToolInputValidator.isPrivateOrLocalHost(finalHost)) {
+                    error("Blocked redirect to private or loopback host '$finalHost'.")
+                }
                 if (!response.isSuccessful) {
                     error("HTTP ${response.code}: ${response.message}")
                 }

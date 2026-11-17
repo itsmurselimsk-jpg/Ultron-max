@@ -117,3 +117,15 @@ data class AuditLogEntity(
     val integrityHash: String,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+@Entity(
+    tableName = "briefing_history",
+    indices = [Index("userId")]
+)
+data class BriefingHistoryEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val title: String,
+    val body: String,
+    val createdAt: Long = System.currentTimeMillis()
+)

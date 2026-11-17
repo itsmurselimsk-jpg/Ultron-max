@@ -3,9 +3,12 @@ package com.example.ui.components
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -54,10 +57,13 @@ import com.example.ui.theme.CrimsonCore
 import com.example.ui.theme.CrimsonDarkContainer
 import com.example.ui.theme.CrimsonLaser
 import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.EmberAmber
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.HairlineBorder
+import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ObsidianVoid
+import com.example.ui.theme.UltravioletPurple
 import com.example.ui.theme.TextPrimary
 import kotlin.math.cos
 import kotlin.math.sin
@@ -96,21 +102,26 @@ fun UltronNeuralCore(
         label = "inner_angle"
     )
     val pulse by transition.animateFloat(
-        initialValue = 0.88f,
-        targetValue = 1.12f,
+        initialValue = 0.89f,
+        targetValue = 1.11f,
         animationSpec = infiniteRepeatable(
             animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulse"
     )
+    val smoothAmplitude by animateFloatAsState(
+        targetValue = amplitude.coerceIn(0.05f, 1.0f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "core_amplitude"
+    )
 
-    val coreColor = when (mode) {
-        CoreVisualMode.IDLE -> CrimsonCore
-        CoreVisualMode.LISTENING -> CyberCyan
-        CoreVisualMode.THINKING -> EmberAmber
-        CoreVisualMode.SPEAKING -> CrimsonLaser
-        CoreVisualMode.ALERT -> CrimsonLaser
+    val (coreColor, harmonicSecondary, harmonicTertiary) = when (mode) {
+        CoreVisualMode.IDLE -> Triple(CrimsonCore, ElectricBlue, UltravioletPurple)
+        CoreVisualMode.LISTENING -> Triple(NeonCyan, ElectricBlue, UltravioletPurple)
+        CoreVisualMode.THINKING -> Triple(ElectricBlue, UltravioletPurple, CyberCyan)
+        CoreVisualMode.SPEAKING -> Triple(CrimsonLaser, CyberCyan, UltravioletPurple)
+        CoreVisualMode.ALERT -> Triple(CrimsonLaser, EmberAmber, CrimsonCore)
     }
 
     Box(
@@ -127,11 +138,13 @@ fun UltronNeuralCore(
             val center = Offset(size.width / 2f, size.height / 2f)
             val baseRadius = size.minDimension / 2f
 
-            // Ambient radial glow
+            // Multi-spectrum JARVIS-inspired ambient radial halo
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        coreColor.copy(alpha = (0.34f + amplitude * 0.25f).coerceAtMost(0.6f)),
+                        coreColor.copy(alpha = (0.38f + smoothAmplitude * 0.25f).coerceAtMost(0.65f)),
+                        harmonicSecondary.copy(alpha = 0.16f),
+                        harmonicTertiary.copy(alpha = 0.08f),
                         ObsidianVoid.copy(alpha = 0f)
                     ),
                     center = center,
@@ -141,52 +154,62 @@ fun UltronNeuralCore(
                 center = center
             )
 
-            // Outer segmented tactical ring
-            val outerR = baseRadius * 0.86f
+            // Outer primary segmented ring
+            val outerR = baseRadius * 0.88f
             for (i in 0 until 3) {
                 drawArc(
-                    color = coreColor.copy(alpha = 0.82f),
+                    color = coreColor.copy(alpha = 0.85f),
                     startAngle = outerAngle + i * 120f,
-                    sweepAngle = 76f,
+                    sweepAngle = 74f,
                     useCenter = false,
                     topLeft = Offset(center.x - outerR, center.y - outerR),
                     size = Size(outerR * 2f, outerR * 2f),
-                    style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = 3.5.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // Middle counter-rotating ring
-            val midR = baseRadius * 0.68f
+            // Secondary harmonic counter-rotating cyan/electric blue ring
+            val midR = baseRadius * 0.72f
             for (i in 0 until 4) {
+                val ringColor = if (i % 2 == 0) harmonicSecondary else harmonicTertiary
                 drawArc(
-                    color = TextPrimary.copy(alpha = 0.45f),
+                    color = ringColor.copy(alpha = 0.72f),
                     startAngle = innerAngle + i * 90f,
-                    sweepAngle = 48f,
+                    sweepAngle = 52f,
                     useCenter = false,
                     topLeft = Offset(center.x - midR, center.y - midR),
                     size = Size(midR * 2f, midR * 2f),
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(width = 2.2.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // Inner neural nodes
-            val nodeR = baseRadius * 0.52f
+            // Fine inner lattice arc
+            val latticeR = baseRadius * 0.56f
+            drawCircle(
+                color = harmonicSecondary.copy(alpha = 0.24f),
+                radius = latticeR,
+                center = center,
+                style = Stroke(width = 1.dp.toPx())
+            )
+
+            // Inner neural telemetry nodes
+            val nodeR = baseRadius * 0.56f
             for (i in 0 until 6) {
                 val rad = Math.toRadians((outerAngle * 0.5 + i * 60).toDouble())
                 val nx = center.x + (nodeR * cos(rad)).toFloat()
                 val ny = center.y + (nodeR * sin(rad)).toFloat()
                 drawCircle(
-                    color = coreColor,
-                    radius = 3.dp.toPx(),
+                    color = if (i % 2 == 0) coreColor else CyberCyan,
+                    radius = 2.8.dp.toPx(),
                     center = Offset(nx, ny)
                 )
             }
 
             // Pulsing central plasma orb
-            val orbRadius = baseRadius * (0.32f + amplitude * 0.08f) * pulse
+            val orbRadius = baseRadius * (0.31f + smoothAmplitude * 0.08f) * pulse
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(Color.White, coreColor, CrimsonDarkContainer),
+                    colors = listOf(Color.White, coreColor, harmonicSecondary.copy(alpha = 0.75f), CrimsonDarkContainer),
                     center = center,
                     radius = orbRadius
                 ),
@@ -216,17 +239,31 @@ fun LiveAudioWaveform(
         val barWidth = (slotWidth * 0.55f).coerceAtLeast(3.dp.toPx())
         val centerY = size.height / 2f
 
+        val activeBrush = Brush.horizontalGradient(
+            colors = listOf(accentColor, ElectricBlue, UltravioletPurple)
+        )
+
         bars.forEachIndexed { index, level ->
             val effective = if (isActive) level.coerceIn(0.10f, 1.0f) else 0.09f
             val barHeight = (size.height * effective).coerceAtLeast(4.dp.toPx())
             val x = index * slotWidth + (slotWidth - barWidth) / 2f
             val y = centerY - barHeight / 2f
-            drawRoundRect(
-                color = if (isActive) accentColor.copy(alpha = 0.55f + effective * 0.45f) else HairlineBorder,
-                topLeft = Offset(x, y),
-                size = Size(barWidth, barHeight),
-                cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
-            )
+            if (isActive) {
+                drawRoundRect(
+                    brush = activeBrush,
+                    alpha = 0.55f + effective * 0.45f,
+                    topLeft = Offset(x, y),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
+            } else {
+                drawRoundRect(
+                    color = HairlineBorder,
+                    topLeft = Offset(x, y),
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = CornerRadius(barWidth / 2f, barWidth / 2f)
+                )
+            }
         }
     }
 }

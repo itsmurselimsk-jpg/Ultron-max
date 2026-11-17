@@ -76,13 +76,17 @@ import com.example.ui.theme.CrimsonCore
 import com.example.ui.theme.CrimsonDarkContainer
 import com.example.ui.theme.CrimsonLaser
 import com.example.ui.theme.CyberCyan
+import com.example.ui.theme.ElectricBlue
+import com.example.ui.theme.ElectricBlueContainer
 import com.example.ui.theme.EmberAmber
 import com.example.ui.theme.EmeraldSignal
 import com.example.ui.theme.HairlineBorder
+import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.ObsidianVoid
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.UltravioletPurple
 
 @Composable
 fun MonitorSecurityScreen(
@@ -150,6 +154,7 @@ fun MonitorSecurityScreen(
                     value = "${telemetry.batteryPercent}%",
                     subtitle = "${if (telemetry.isCharging) "Charging" else "Drain"} • ${telemetry.batteryTempC}°C",
                     icon = Icons.Default.BatteryChargingFull,
+                    tint = CrimsonLaser,
                     modifier = Modifier.weight(1f)
                 )
                 TelemetryTile(
@@ -157,6 +162,7 @@ fun MonitorSecurityScreen(
                     value = "${telemetry.ramUsedMb} MB",
                     subtitle = "of ${telemetry.ramTotalMb} MB",
                     icon = Icons.Default.Memory,
+                    tint = ElectricBlue,
                     modifier = Modifier.weight(1f)
                 )
                 TelemetryTile(
@@ -164,6 +170,7 @@ fun MonitorSecurityScreen(
                     value = telemetry.networkTransport,
                     subtitle = if (telemetry.networkValidated) "Validated" else "Limited",
                     icon = Icons.Default.Wifi,
+                    tint = NeonCyan,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -275,7 +282,7 @@ fun MonitorSecurityScreen(
                             Text("ZERO-TRUST SECURITY", style = MaterialTheme.typography.labelLarge, color = TextPrimary)
                         }
                         TacticalStatusChip(
-                            label = if (isKeystoreActive) "KEYSTORE ACTIVE" else "SOFTWARE KEY",
+                            label = if (isKeystoreActive) "KEY_V${prefs.activeKeyVersion} • HARDWARE" else "KEY_V${prefs.activeKeyVersion} • SOFTWARE",
                             color = if (isKeystoreActive) EmeraldSignal else EmberAmber
                         )
                     }
@@ -286,6 +293,21 @@ fun MonitorSecurityScreen(
                         onReset = { viewModel.resetEmergencyStop() },
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    OutlinedButton(
+                        onClick = { viewModel.rotateEncryptionKey() },
+                        border = BorderStroke(1.dp, UltravioletPurple.copy(alpha = 0.65f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .testTag("rotate_key_button")
+                    ) {
+                        Text(
+                            text = "Rotate Master AES-GCM Key (KEY_V${prefs.activeKeyVersion})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = CyberCyan
+                        )
+                    }
 
                     // Risk Policy
                     Row(
@@ -496,6 +518,7 @@ private fun TelemetryTile(
     value: String,
     subtitle: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
+    tint: androidx.compose.ui.graphics.Color = CrimsonLaser,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -505,11 +528,11 @@ private fun TelemetryTile(
         modifier = modifier
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
-            Icon(icon, contentDescription = title, tint = CrimsonLaser)
+            Icon(icon, contentDescription = title, tint = tint)
             Spacer(modifier = Modifier.height(4.dp))
             Text(title, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
             Text(value, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = CyberCyan, maxLines = 1)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
         }
     }
 }

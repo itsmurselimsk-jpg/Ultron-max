@@ -18,6 +18,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.R
 import com.example.androidtools.AndroidToolExecutor
+import com.example.data.local.BriefingHistoryEntity
 import com.example.data.local.UltronDatabase
 import com.example.security.CryptoManager
 import com.example.security.SecureCredentialStore
@@ -25,6 +26,7 @@ import com.example.widget.UltronGlanceWidget
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.flow.first
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 object BriefingScheduler {
@@ -86,10 +88,26 @@ object BriefingScheduler {
             append(" • Policy: ${prefs.riskPolicy.name}")
         }
 
+        val now = System.currentTimeMillis()
+        if (!uid.isNullOrBlank()) {
+            runCatching {
+                val dao = UltronDatabase.getInstance(appContext).ultronDao()
+                dao.insertBriefingHistory(
+                    BriefingHistoryEntity(
+                        id = "brf_${UUID.randomUUID().toString().replace("-", "").take(12)}",
+                        userId = uid,
+                        title = title,
+                        body = body,
+                        createdAt = now
+                    )
+                )
+            }
+        }
+
         store.saveBriefingSnapshot(
             title = title,
             body = body,
-            timestamp = System.currentTimeMillis()
+            timestamp = now
         )
         runCatching { UltronGlanceWidget().updateAll(appContext) }
 

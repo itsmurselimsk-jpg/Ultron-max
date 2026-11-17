@@ -71,8 +71,8 @@ class DeepMaleTtsEngine(context: Context) : TextToSpeech.OnInitListener {
 
         val targetLocale = when (language) {
             VoiceLanguage.ENGLISH -> Locale.US
-            VoiceLanguage.HINDI, VoiceLanguage.HINGLISH -> Locale("hi", "IN")
-            VoiceLanguage.BANGLA, VoiceLanguage.BANGLISH -> Locale("bn", "IN")
+            VoiceLanguage.HINDI, VoiceLanguage.HINGLISH -> Locale.forLanguageTag("hi-IN")
+            VoiceLanguage.BANGLA, VoiceLanguage.BANGLISH -> Locale.forLanguageTag("bn-IN")
         }
 
         val langResult = engine.setLanguage(targetLocale)

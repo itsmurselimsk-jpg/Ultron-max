@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.agent.AgentEngine
 import com.example.agent.PendingConfirmationRequest
 import com.example.data.local.AgentStepEntity
 import com.example.data.local.AgentTaskEntity
@@ -24,6 +25,8 @@ import com.example.research.ResearchReport
 import com.example.security.PermissionStatusSnapshot
 import com.example.security.RiskLevel
 import com.example.security.RiskPolicyLevel
+import com.example.security.ToolInputValidator
+import com.example.security.ToolValidationResult
 import com.example.security.UserPreferencesSnapshot
 import com.example.security.VoiceLanguage
 import com.example.system.BriefingScheduler
@@ -45,6 +48,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 sealed interface AiUiState {
@@ -168,11 +172,21 @@ class UltronViewModel(
         refreshSystemState()
         startCloudMemorySync()
         observeWidgetEmergencyStopSync()
+        observeTtsStateSync()
+    }
+
+    private fun observeTtsStateSync() {
+        viewModelScope.launch {
+            container.ttsEngine.isSpeaking.collectLatest { speaking ->
+                container.voiceEngine.syncTtsSpeakingState(speaking)
+            }
+        }
     }
 
     private fun observeWidgetEmergencyStopSync() {
         viewModelScope.launch {
             container.credentialStore.preferencesFlow.collectLatest { prefs ->
+                container.cryptoManager.setActiveKeyVersion(prefs.activeKeyVersion)
                 if (prefs.widgetEmergencyStop && !emergencyStopEngaged.value) {
                     container.riskEngine.engageEmergencyStop()
                     activeChatJob?.cancel()
@@ -264,22 +278,55 @@ class UltronViewModel(
                 language = prefs.voiceLanguage,
                 preferredTier = prefs.preferredModelTier,
                 toolExecutor = { call ->
+                    if (emergencyStopEngaged.value) {
+                        return@streamConversation "Blocked by Emergency Stop."
+                    }
+                    val rawArg1 = call.args["enabled"] ?: call.args["appQuery"] ?: call.args["query"]
+                        ?: call.args["percent"] ?: call.args["command"] ?: call.args["section"]
+                        ?: call.args["action"] ?: call.args["title"] ?: call.args["stream"] ?: ""
+                    val rawArg2 = call.args["content"] ?: call.args["percent"] ?: ""
+                    val valid = when (val v = ToolInputValidator.validateToolArguments(call.name, rawArg1, rawArg2)) {
+                        is ToolValidationResult.Invalid -> {
+                            container.memoryRepository.recordAudit(
+                                currentUserId, "AGENT", call.name, RiskLevel.HIGH, "BLOCKED",
+                                v.reason, prefs.cloudSyncEnabled
+                            )
+                            return@streamConversation "Blocked invalid tool input: ${v.reason}"
+                        }
+                        is ToolValidationResult.Valid -> v
+                    }
+
                     val eval = container.riskEngine.evaluateTool(
                         call.name,
-                        call.args.values.joinToString(", "),
+                        "${valid.arg1} ${valid.arg2}".trim(),
                         prefs.riskPolicy,
                         prefs.confirmWithBiometrics
                     )
                     if (eval.requiresUserConfirmation) {
+                        val stepId = "chat_${UUID.randomUUID().toString().take(8)}"
                         val deferred = CompletableDeferred<Boolean>()
                         _chatToolConfirmation.value = PendingConfirmationRequest(
                             taskId = convId,
-                            stepId = "chat_${UUID.randomUUID().toString().take(8)}",
+                            stepId = stepId,
                             evaluation = eval,
-                            description = "Ultron Intelligence requests tool ${call.name}(${call.args})",
-                            deferred = deferred
+                            description = "Ultron Intelligence requests tool ${call.name}(${valid.arg1})",
+                            deferred = deferred,
+                            expiresAtEpochMs = System.currentTimeMillis() + AgentEngine.DEFAULT_CONFIRMATION_TIMEOUT_MS
                         )
-                        val approved = deferred.await()
+                        val approved = withTimeoutOrNull(AgentEngine.DEFAULT_CONFIRMATION_TIMEOUT_MS) {
+                            deferred.await()
+                        }
+                        if (_chatToolConfirmation.value?.stepId == stepId) {
+                            _chatToolConfirmation.value = null
+                        }
+                        if (approved == null) {
+                            deferred.cancel()
+                            container.memoryRepository.recordAudit(
+                                currentUserId, "USER", call.name, eval.riskLevel, "DENIED",
+                                "Chat confirmation timed out after 45s", prefs.cloudSyncEnabled
+                            )
+                            return@streamConversation "Action timed out after 45s and was cancelled."
+                        }
                         if (!approved) {
                             container.memoryRepository.recordAudit(
                                 currentUserId, "USER", call.name, eval.riskLevel, "DENIED",
@@ -287,24 +334,24 @@ class UltronViewModel(
                             )
                             return@streamConversation "Action denied by operator."
                         }
+                        if (emergencyStopEngaged.value) {
+                            return@streamConversation "Aborted: Emergency Stop engaged."
+                        }
                     }
-                    val arg1 = call.args["enabled"] ?: call.args["appQuery"] ?: call.args["query"]
-                        ?: call.args["percent"] ?: call.args["command"] ?: call.args["section"]
-                        ?: call.args["action"] ?: call.args["title"] ?: call.args["stream"] ?: ""
-                    val arg2 = call.args["content"] ?: call.args["percent"] ?: ""
-                    val result = container.agentEngine.executeRegisteredTool(
+                    val toolRes = container.agentEngine.executeRegisteredToolVerified(
                         userId = currentUserId,
                         toolName = call.name,
-                        arg1 = arg1,
-                        arg2 = arg2,
+                        arg1 = valid.arg1,
+                        arg2 = valid.arg2,
                         syncToCloud = prefs.cloudSyncEnabled
                     )
                     container.memoryRepository.recordAudit(
-                        currentUserId, "AGENT", call.name, eval.riskLevel, "EXECUTED",
-                        result.take(300), prefs.cloudSyncEnabled
+                        currentUserId, "AGENT", call.name, eval.riskLevel,
+                        if (toolRes.success) "EXECUTED" else "BLOCKED",
+                        toolRes.output.take(300), prefs.cloudSyncEnabled
                     )
                     refreshSystemState()
-                    result
+                    toolRes.output
                 }
             ).collect { event ->
                 when (event) {
@@ -355,10 +402,16 @@ class UltronViewModel(
         _aiState.value = AiUiState.Idle
     }
 
-    fun resolveChatToolConfirmation(approved: Boolean) {
-        val req = _chatToolConfirmation.value
+    fun resolveChatToolConfirmation(
+        approved: Boolean,
+        expectedTaskId: String? = null,
+        expectedStepId: String? = null
+    ) {
+        val req = _chatToolConfirmation.value ?: return
+        if (expectedTaskId != null && req.taskId != expectedTaskId) return
+        if (expectedStepId != null && req.stepId != expectedStepId) return
         _chatToolConfirmation.value = null
-        req?.deferred?.complete(approved)
+        req.deferred.complete(approved)
     }
 
     // --- VOICE ENGINE ---
@@ -443,7 +496,10 @@ class UltronViewModel(
     // --- AUTONOMOUS AGENT ---
     fun launchAgentGoal(goal: String) {
         if (goal.isBlank()) return
-        activeAgentJob?.cancel()
+        if (activeAgentJob?.isActive == true || activeAgentTaskId.value != null) {
+            _statusBanner.value = "An autonomous mission is already running. Cancel it before starting a new one."
+            return
+        }
         activeAgentJob = viewModelScope.launch {
             val prefs = preferences.value
             val result = container.agentEngine.executeAutonomousGoal(
@@ -465,8 +521,12 @@ class UltronViewModel(
         }
     }
 
-    fun resolveAgentConfirmation(approved: Boolean) {
-        container.agentEngine.resolveConfirmation(approved)
+    fun resolveAgentConfirmation(
+        approved: Boolean,
+        expectedTaskId: String? = null,
+        expectedStepId: String? = null
+    ) {
+        container.agentEngine.resolveConfirmation(approved, expectedTaskId, expectedStepId)
     }
 
     fun cancelActiveAgentTask() {
@@ -743,6 +803,31 @@ class UltronViewModel(
                 preferences.value.cloudSyncEnabled
             )
             _statusBanner.value = if (token.isBlank()) "GitHub PAT cleared." else "GitHub PAT encrypted in AndroidKeyStore."
+        }
+    }
+
+    fun rotateEncryptionKey() {
+        viewModelScope.launch {
+            val prefs = preferences.value
+            container.memoryRepository.rotateMasterKeyAndReencrypt(
+                userId = currentUserId,
+                syncToCloud = prefs.cloudSyncEnabled
+            ).onSuccess { (newVersion, reencryptedCount) ->
+                container.credentialStore.updateKeyVersion(newVersion, System.currentTimeMillis())
+                container.credentialStore.reencryptPatIfNeeded()
+                container.memoryRepository.recordAudit(
+                    currentUserId,
+                    "USER",
+                    "KEYSTORE_KEY_ROTATION",
+                    RiskLevel.HIGH,
+                    "EXECUTED",
+                    "Rotated AES-256-GCM key to v$newVersion and re-encrypted $reencryptedCount memories.",
+                    prefs.cloudSyncEnabled
+                )
+                _statusBanner.value = "Rotated Vault encryption key to KEY_V$newVersion ($reencryptedCount memories re-encrypted)."
+            }.onFailure { err ->
+                _statusBanner.value = "Key rotation failed: ${err.localizedMessage}"
+            }
         }
     }
 

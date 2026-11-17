@@ -57,6 +57,9 @@ interface UltronDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAgentTask(task: AgentTaskEntity)
 
+    @Query("SELECT * FROM agent_tasks WHERE id = :taskId LIMIT 1")
+    suspend fun getAgentTaskById(taskId: String): AgentTaskEntity?
+
     @Query("SELECT * FROM agent_steps WHERE taskId = :taskId ORDER BY stepOrder ASC")
     fun observeAgentSteps(taskId: String): Flow<List<AgentStepEntity>>
 
@@ -68,6 +71,9 @@ interface UltronDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAgentStep(step: AgentStepEntity)
+
+    @Query("UPDATE agent_steps SET status = 'CANCELLED', verificationNotes = :note WHERE taskId = :taskId AND status IN ('PENDING', 'AWAITING_CONFIRMATION', 'RUNNING')")
+    suspend fun cancelIncompleteSteps(taskId: String, note: String)
 
     // Citations
     @Query("SELECT * FROM citations WHERE userId = :userId ORDER BY createdAt DESC")
@@ -88,4 +94,11 @@ interface UltronDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditLog(log: AuditLogEntity)
+
+    // Briefing History (added in Schema v2)
+    @Query("SELECT * FROM briefing_history WHERE userId = :userId ORDER BY createdAt DESC LIMIT 20")
+    fun observeBriefingHistory(userId: String): Flow<List<BriefingHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBriefingHistory(entry: BriefingHistoryEntity)
 }
